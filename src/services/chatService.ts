@@ -52,7 +52,7 @@ class ChatService {
     }
 
     const config = { configurable: { sessionId } };
-    const response = await this.withMessageHistory.invoke({ input: message }, config);
+    const response = await this.withMessageHistory.stream({ input: message }, config);
     return response;
   }
 

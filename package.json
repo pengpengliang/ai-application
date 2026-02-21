@@ -6,14 +6,22 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "tsx server.ts"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "@langchain/community": "^1.1.15",
     "@langchain/core": "^1.1.22",
     "@langchain/openai": "^1.2.7",
+    "@types/axios": "^0.9.36",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "axios": "^1.13.5",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
     "element-plus": "^2.13.2",
+    "express": "^5.2.1",
     "langchain": "^1.2.21",
     "pinia": "^3.0.4",
     "vue": "^3.5.25",
@@ -26,6 +34,7 @@
     "less": "^4.5.1",
     "less-loader": "^12.3.1",
     "ts-loader": "^9.5.4",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   }
