@@ -18,11 +18,25 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // '/api': {
-      //   target: 'https://www.news.cn',
-      //   changeOrigin: true,
-      //   rewrite: (path) => path.replace(/^\/api/, ''),
-      // }
+      '/news': {
+        target: 'https://www.news.cn/',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/news/, ''),
+      },
+      '/python-server': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/python-server/, ''),
+      },
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true
+      },
+      '/docServe': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/docServe/, ''),
+      }
     },
   },
 })
