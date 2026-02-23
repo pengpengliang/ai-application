@@ -62,30 +62,37 @@ function handlePasteFile(firstFile: File, fileList: FileList) {
 }
 
 async function handleHttpRequest(options: any) {
-  const formData = new FormData();
-  formData.append('file', options.file);
-  ElMessage.info('上传中...');
-
-  setTimeout(() => {
-    const res = {
-      message: '文件上传成功',
-      fileName: options.file.name,
-      uid: options.file.uid,
-      fileSize: options.file.size,
-      imgFile: options.file
-    };
-    files.value.push({
-      id: files.value.length,
-      uid: res.uid,
-      name: res.fileName,
-      fileSize: res.fileSize,
-      imgFile: res.imgFile,
-      showDelIcon: true,
-      imgVariant: 'square'
+  try {
+    ElMessage.info('上传中...');
+    const formData = new FormData();
+    formData.append('file', options.file);
+    formData.append('process_method', 'summary');
+    fetch('/python-server/upload/', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data =>{
+        const res = {
+          fileName: options.file.name,
+          uid: options.file.uid,
+          fileSize: options.file.size,
+          imgFile: options.file
+        };
+        files.value.push({
+          id: files.value.length,
+          uid: res.uid,
+          name: res.fileName,
+          fileSize: res.fileSize,
+          imgFile: res.imgFile,
+          showDelIcon: true,
+          imgVariant: 'square'
+        });
+        ElMessage.success('上传成功');
     });
-
-    ElMessage.success('上传成功');
-  }, 1000);
+  } catch (error) {
+    ElMessage.error('上传失败');
+  }
 }
 
 function handleDeleteCard(item: SelfFilesCardProps) {
@@ -154,7 +161,7 @@ async function handleSubmit(value: string) {
     //   reasoningChunk += chunk.content as string;
     // }
     // chatList.value.push(createMessage('ai', reasoningChunk, false, true));
-    chatList.value.push(createMessage('ai', response.output.answer as string, false, true));
+    chatList.value.push(createMessage('ai', response.answer as string, false, true));
 
     if (conversationStore.isNewSession) {
       conversationStore.addConversation(value);

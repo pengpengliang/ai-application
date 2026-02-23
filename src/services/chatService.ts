@@ -50,19 +50,26 @@ class ChatService {
     if (!message.trim()) {
       throw new Error('Message cannot be empty');
     }
-    const response = await fetch('/api/parseDoc', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        input: message
-      })
-    });
-    return await response.json();
+    // const response = await fetch('/api/parseDoc', {
+    //   method: 'POST',
+    //   headers: {
+    //     'Content-Type': 'application/json',
+    //   },
+    //   body: JSON.stringify({
+    //     input: message
+    //   })
+    // });
+    // return await response.json();
     // const config = { configurable: { sessionId } };
     // const response = await this.withMessageHistory.stream({ input: message }, config);
     // return response;
+    const formData = new FormData();
+    formData.append('question', message);
+    const response = await fetch('/python-server/summary-doc/', {
+      method: 'POST',
+      body: formData
+    });
+    return await response.json();
   }
 
   async getMessageHistory(sessionId: string) {
