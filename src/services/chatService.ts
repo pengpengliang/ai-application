@@ -105,11 +105,13 @@ class ChatService {
 
   async getMessageHistory(sessionId: string) {
     if (!sessionId) {
-      throw new Error('Session ID is required');
+      throw new Error('会话ID不能为空');
     }
-
-    const history = await this.withMessageHistory.getMessageHistory(sessionId);
-    return history;
+    const response = await fetch(`/python-server/chat-history/${sessionId}`, {
+      method: 'GET'
+    });
+    const data = await response.json();
+    return data;
   }
 
   hasSession(sessionId: string) {
