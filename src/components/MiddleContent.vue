@@ -149,6 +149,14 @@ async function handleSubmit(value: string) {
     if (!conversationStore.currentSessionId || conversationStore.isNewSession) {
       conversationStore.changeIsNewSession(true);
       conversationStore.createSessionId();
+      const response = await fetch('/python-server/chat_session/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      const data = await response.json();
+      conversationStore.changeSessionId(data.session_id)
     } else {
       conversationStore.changeIsNewSession(false);
     }
@@ -156,11 +164,19 @@ async function handleSubmit(value: string) {
     const response = await chatService.chat(conversationStore.currentSessionId, value);
     console.log('模型响应:', response);
     chatList.value.push(createMessage('user', value));
+
+    // 创建AI消息占位符
+    const aiMessageIndex = chatList.value.length;
+    chatList.value.push(createMessage('ai', '', false, true));
+
+    // 流式接收响应
     let reasoningChunk = ''
     for await (const chunk of response) {
+      console.log('收到的chunk:', chunk);
       reasoningChunk += chunk.content as string;
+      // 更新AI消息内容
+      chatList.value[aiMessageIndex].content = reasoningChunk;
     }
-    chatList.value.push(createMessage('ai', reasoningChunk, false, true));
     // chatList.value.push(createMessage('ai', response.content as string, false, true));
 
     if (conversationStore.isNewSession) {

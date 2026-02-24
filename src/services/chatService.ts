@@ -48,28 +48,59 @@ class ChatService {
 
   async chat(sessionId: string, message: string) {
     if (!message.trim()) {
-      throw new Error('Message cannot be empty');
+      throw new Error('消息不能为空');
+      return
     }
-    // const response = await fetch('/api/parseDoc', {
-    //   method: 'POST',
-    //   headers: {
-    //     'Content-Type': 'application/json',
-    //   },
-    //   body: JSON.stringify({
-    //     input: message
-    //   })
-    // });
-    // return await response.json();
-    const config = { configurable: { sessionId } };
-    const response = await this.withMessageHistory.stream({ input: message }, config);
-    return response;
-    // const formData = new FormData();
-    // formData.append('question', message);
-    // const response = await fetch('/python-server/summary-doc/', {
-    //   method: 'POST',
-    //   body: formData
-    // });
-    // return await response.json();
+
+    const formData = new FormData();
+    formData.append('session_id', sessionId);
+    formData.append('input_text', message);
+
+    const response = await fetch('/python-server/chat/stream', {
+      method: 'POST',
+      body: formData
+    });
+    console.log('聊天响应:', response);
+    if (!response.body) {
+      throw new Error('响应体为空');
+      return
+    }
+
+    return this.parseStream(response.body);
+  }
+
+  async *parseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<{ content: string }> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value);
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.content) {
+                yield { content: data.content };
+              }
+            } catch (e) {
+              console.error('解析JSON失败:', e);
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   async getMessageHistory(sessionId: string) {

@@ -25,6 +25,19 @@ export const useConversationStore = defineStore('conversation', () => {
     isNewSession: false
   });
 
+  //请求一个接口，获取一个新的sessionId
+  // async function createSessionId() {
+  //   const response = await fetch('/python-server/chat_session/create', {
+  //     method: 'POST',
+  //     headers: {
+  //       'Content-Type': 'application/json',
+  //     }
+  //   });
+  //   const data = await response.json();
+  //   console.log('创建会话响应:', data);
+  //   state.value.currentSessionId = data.sessionId;
+  // }
+
   const currentConversation = computed(() => {
     return state.value.conversationList.find(
       item => item.id === state.value.currentSessionId
@@ -37,6 +50,10 @@ export const useConversationStore = defineStore('conversation', () => {
 
   function createSessionId() {
     state.value.currentSessionId = `${new Date().getTime()}`;
+  }
+
+  function changeSessionId(sessionId: string) {
+    state.value.currentSessionId = sessionId;
   }
 
   function addConversation(content: string) {
@@ -57,10 +74,10 @@ export const useConversationStore = defineStore('conversation', () => {
     if (index !== -1) {
       state.value.conversationList.splice(index, 1);
       chatService.deleteSession(sessionId);
-      
+
       if (state.value.currentSessionId === sessionId) {
-        state.value.currentSessionId = state.value.conversationList.length > 0 
-          ? state.value.conversationList[0].id 
+        state.value.currentSessionId = state.value.conversationList.length > 0
+          ? state.value.conversationList[0].id
           : '';
       }
     }
@@ -80,6 +97,7 @@ export const useConversationStore = defineStore('conversation', () => {
     currentConversation,
     changeIsNewSession,
     createSessionId,
+    changeSessionId,
     addConversation,
     switchConversation,
     deleteConversation,
