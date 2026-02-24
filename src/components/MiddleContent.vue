@@ -156,15 +156,16 @@ async function handleSubmit(value: string) {
     const response = await chatService.chat(conversationStore.currentSessionId, value);
     console.log('模型响应:', response);
     chatList.value.push(createMessage('user', value));
-    // let reasoningChunk = ''
-    // for await (const chunk of response) {
-    //   reasoningChunk += chunk.content as string;
-    // }
-    // chatList.value.push(createMessage('ai', reasoningChunk, false, true));
-    chatList.value.push(createMessage('ai', response.answer as string, false, true));
+    let reasoningChunk = ''
+    for await (const chunk of response) {
+      reasoningChunk += chunk.content as string;
+    }
+    chatList.value.push(createMessage('ai', reasoningChunk, false, true));
+    // chatList.value.push(createMessage('ai', response.content as string, false, true));
 
     if (conversationStore.isNewSession) {
       conversationStore.addConversation(value);
+      conversationStore.changeIsNewSession(false)
     }
   } catch (error) {
     console.error('模型调用失败:', error);

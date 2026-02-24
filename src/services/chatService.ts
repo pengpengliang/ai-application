@@ -60,16 +60,16 @@ class ChatService {
     //   })
     // });
     // return await response.json();
-    // const config = { configurable: { sessionId } };
-    // const response = await this.withMessageHistory.stream({ input: message }, config);
-    // return response;
-    const formData = new FormData();
-    formData.append('question', message);
-    const response = await fetch('/python-server/summary-doc/', {
-      method: 'POST',
-      body: formData
-    });
-    return await response.json();
+    const config = { configurable: { sessionId } };
+    const response = await this.withMessageHistory.stream({ input: message }, config);
+    return response;
+    // const formData = new FormData();
+    // formData.append('question', message);
+    // const response = await fetch('/python-server/summary-doc/', {
+    //   method: 'POST',
+    //   body: formData
+    // });
+    // return await response.json();
   }
 
   async getMessageHistory(sessionId: string) {
