@@ -26,17 +26,17 @@ export const useConversationStore = defineStore('conversation', () => {
   });
 
   //请求一个接口，获取一个新的sessionId
-  // async function createSessionId() {
-  //   const response = await fetch('/python-server/chat_session/create', {
-  //     method: 'POST',
-  //     headers: {
-  //       'Content-Type': 'application/json',
-  //     }
-  //   });
-  //   const data = await response.json();
-  //   console.log('创建会话响应:', data);
-  //   state.value.currentSessionId = data.sessionId;
-  // }
+  async function createSessionId() {
+    const response = await fetch('/python-server/chat_session/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    const data = await response.json();
+    console.log('创建会话响应:', data);
+    state.value.currentSessionId = data.session_id;
+  }
 
   const currentConversation = computed(() => {
     return state.value.conversationList.find(
@@ -48,9 +48,9 @@ export const useConversationStore = defineStore('conversation', () => {
     state.value.isNewSession = value;
   }
 
-  function createSessionId() {
-    state.value.currentSessionId = `${new Date().getTime()}`;
-  }
+  // function createSessionId() {
+  //   state.value.currentSessionId = `${new Date().getTime()}`;
+  // }
 
   function changeSessionId(sessionId: string) {
     state.value.currentSessionId = sessionId;

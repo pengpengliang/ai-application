@@ -67,6 +67,10 @@ async function handleHttpRequest(options: any) {
     const formData = new FormData();
     formData.append('file', options.file);
     formData.append('process_method', 'summary');
+    if (!conversationStore.currentSessionId) {
+      await conversationStore.createSessionId();
+    }
+    formData.append('session_id', conversationStore.currentSessionId);
     fetch('/python-server/upload/', {
         method: 'POST',
         body: formData
@@ -148,15 +152,15 @@ async function handleSubmit(value: string) {
 
     if (!conversationStore.currentSessionId || conversationStore.isNewSession) {
       conversationStore.changeIsNewSession(true);
-      conversationStore.createSessionId();
-      const response = await fetch('/python-server/chat_session/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-      const data = await response.json();
-      conversationStore.changeSessionId(data.session_id)
+      await conversationStore.createSessionId();
+      // const response = await fetch('/python-server/chat_session/create', {
+      //   method: 'POST',
+      //   headers: {
+      //     'Content-Type': 'application/json',
+      //   }
+      // });
+      // const data = await response.json();
+      // conversationStore.changeSessionId(data.session_id)
     } else {
       conversationStore.changeIsNewSession(false);
     }

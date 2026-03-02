@@ -22,3 +22,20 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+
+# --- Python 通用忽略 ---
+# 字节码缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境 (uv, venv, virtualenv 等)
+.venv/
+venv/
+ENV/
+env/
+.env/
+
+# uv 特定的临时文件 (如果有)
+.uv/
