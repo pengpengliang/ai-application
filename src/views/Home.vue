@@ -5,7 +5,7 @@
     <router-link to="/tools/translateTool" class="btn">
       进入翻译工具
     </router-link>
-    <router-link to="/tools/chatRobot" class="btn">
+    <router-link to="/" class="btn">
       进入聊天机器人
     </router-link>
   </div>

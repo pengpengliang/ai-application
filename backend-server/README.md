@@ -20,17 +20,14 @@
 ## 安装步骤
 
 ```bash
-# 安装依赖
-uv pip install -r requirements.txt
-
-# 或使用 uv（推荐）
+# 使用 uv（推荐）
 uv sync
 ```
 
 ## 启动服务器
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 服务器将在 `http://localhost:8000` 启动

@@ -104,6 +104,11 @@ function handleDeleteCard(item: SelfFilesCardProps) {
   ElMessage.success('删除成功');
 }
 
+function clearFileList() {
+  files.value = [];
+}
+
+
 function createMessage(
   role: 'user' | 'ai',
   content: string,
@@ -197,15 +202,16 @@ async function handleSubmit(value: string) {
 
 function clearList() {
   chatList.value = [];
+  clearFileList()
 }
 
 defineExpose({
-  clearList,
+  clearList
 })
 </script>
 
 <template>
-    <div style="height: calc(100% - 230px);">
+    <div style="height: calc(100% - 230px); overflow: auto;">
         <BubbleList
         :list="chatList"
         always-show-scrollbar
@@ -216,7 +222,7 @@ defineExpose({
       flex-direction: column;
       gap: 12px;
       height: 230px;
-      justify-content: flex-end;">
+      justify-content: flex-end;" class="sender-container">
         <Sender ref="senderRef" v-model="senderValue" :loading="senderLoading" variant="updown" clearable @submit="handleSubmit"  @paste-file="handlePasteFile" allow-speech>
           <template #header>
             <div class="header-self-wrap">
@@ -282,5 +288,11 @@ defineExpose({
 
 .prefix-self-wrap {
   display: flex;
+}
+
+.sender-container {
+  .header-self-wrap {
+    height: 100px;
+  }
 }
 </style>
