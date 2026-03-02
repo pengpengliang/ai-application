@@ -511,6 +511,16 @@ async def get_chat_history(session_id: str):
         created_at=getattr(history, 'created_at', datetime.now().isoformat())
     )
 
+
+@app.post("/clear-history/{session_id}")
+async def clear_chat_history(session_id: str):
+    """清除指定会话的聊天记录"""
+    if session_id in chat_history_store:
+        del chat_history_store[session_id]
+        return {"message": "聊天记录已清除","session_id":session_id}
+    raise HTTPException(status_code=404, detail="会话不存在")
+
+
 @app.get("/test-chat")
 async def test_chat():
     """测试聊天接口"""

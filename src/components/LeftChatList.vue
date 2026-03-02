@@ -15,8 +15,16 @@ function handleMenuCommand(
   item: ConversationItem
 ) {
   if (command === 'delete') {
-    conversationStore.deleteConversation(item.id as string);
-    ElMessage.success('删除成功');
+    fetch(`/python-server/clear-history/${item.id}`,{
+      method: 'POST'
+    }).then(res => res.json()).then(data => {
+      if (data.message === '聊天记录已清除') {
+        conversationStore.deleteConversation(item.id as string);
+        ElMessage.success('删除成功');
+      }
+    }).catch(err => {
+      ElMessage.error('删除失败');
+    })
   }
   if (command === 'rename') {
     const newLabel = prompt('请输入新的会话名称:', item.label);
