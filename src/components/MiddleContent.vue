@@ -70,6 +70,33 @@ async function handleHttpRequest(options: any) {
     if (!conversationStore.currentSessionId) {
       await conversationStore.createSessionId();
     }
+    // todo: 前端UI框架暂不支持改动上传中这三个文字，如果框架支持，则可以把后台接口拆分成上传和解析两个接口
+    const fileLength = files.value.length;
+    const res = {
+      fileName: options.file.name,
+      uid: options.file.uid,
+      fileSize: options.file.size,
+      imgFile: options.file
+    };
+    files.value.push({
+      id: files.value.length,
+      uid: res.uid,
+      name: res.fileName,
+      fileSize: res.fileSize,
+      imgFile: res.imgFile,
+      showDelIcon: true,
+      imgVariant: 'square',
+      status: 'uploading',
+      percent: 0
+    })
+    // percent每10s增加10
+    const percentInterval = setInterval(() => {
+      if (files.value[fileLength].percent >= 99) {
+        files.value[fileLength].percent = 99;
+        return;
+      }
+      files.value[fileLength].percent += 9;
+    }, 1500);
     formData.append('session_id', conversationStore.currentSessionId);
     fetch('/python-server/upload/', {
         method: 'POST',
@@ -77,21 +104,9 @@ async function handleHttpRequest(options: any) {
     })
     .then(response => response.json())
     .then(data =>{
-        const res = {
-          fileName: options.file.name,
-          uid: options.file.uid,
-          fileSize: options.file.size,
-          imgFile: options.file
-        };
-        files.value.push({
-          id: files.value.length,
-          uid: res.uid,
-          name: res.fileName,
-          fileSize: res.fileSize,
-          imgFile: res.imgFile,
-          showDelIcon: true,
-          imgVariant: 'square'
-        });
+        files.value[fileLength].percent = 100;
+        files.value[fileLength].status = 'done';
+        clearInterval(percentInterval);
         ElMessage.success('上传成功');
     });
   } catch (error) {
