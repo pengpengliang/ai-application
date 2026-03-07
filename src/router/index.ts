@@ -16,6 +16,11 @@ const routes: Array<RouteRecordRaw> = [
     name: 'TranslateTool',
     component: () => import('../views/tools/TranslateTool.vue')
   },
+  {
+    path: '/knowledge-base',
+    name: 'KnowledgeBase',
+    component: () => import('../views/KnowledgeBase.vue')
+  },
 ];
 
 const router = createRouter({

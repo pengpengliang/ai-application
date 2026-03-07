@@ -69,37 +69,51 @@ class ChatService {
     return this.parseStream(response.body);
   }
 
+  /**
+   * 解析服务器返回的 SSE（Server-Sent Events）流数据
+   * 逐行读取并以 JSON 格式提取 content 字段，用于前端实时展示
+   * @param body - 可读流，包含服务器推送的文本数据
+   * @yields 每次返回一个包含 content 字段的对象
+   */
   async *parseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<{ content: string }> {
-    const reader = body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
+    const reader = body.getReader(); // 获取流的读取器
+    const decoder = new TextDecoder('utf-8'); // 用于将 Uint8Array 解码为字符串
+    let buffer = ''; // 缓存未处理完的半行数据
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await reader.read(); // 读取下一段数据
+        console.log('读取到的数据:', value);
+        console.log('流是否结束:', done);
         if (done) {
-          break;
+          break; // 流已结束
         }
-
-        buffer += decoder.decode(value);
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
+        console.log('解码后的数据:', decoder.decode(value, { stream: true }));
+        // stream: true 表示本次解码的数据可能不完整（例如 UTF-8 字符被截断），
+        // 需要保留未处理完的字符在内部状态中，等待后续数据继续拼接，防止乱码。
+        buffer += decoder.decode(value, { stream: true });
+        console.log('当前缓存:', buffer);
+        const lines = buffer.split('\n'); // 按行分割
+        console.log('按行分割后:', lines);
+        buffer = lines.pop() || ''; // 最后一行可能不完整，留待下次处理
+        console.log('处理后的缓存:', buffer);
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
-              const data = JSON.parse(line.slice(6));
+              console.log('原始数据:', line);
+              const data = JSON.parse(line.slice(6)); // 去掉前缀后解析 JSON
+              console.log('解析后的JSON:', data);
               if (data.content) {
-                yield { content: data.content };
+                yield { content: data.content }; // 向外部产出有效内容
               }
             } catch (e) {
-              console.error('解析JSON失败:', e);
+              console.error('解析JSON失败:', e); // 打印解析异常，继续后续行
             }
           }
         }
       }
     } finally {
-      reader.releaseLock();
+      reader.releaseLock(); // 释放读取器锁，防止内存泄漏
     }
   }
 
