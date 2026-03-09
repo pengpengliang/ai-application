@@ -8,7 +8,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException,Depends, Form
 from fastapi.responses import JSONResponse,StreamingResponse
 from sqlalchemy.orm import Session
 from database import get_db, engine, Base
-from models import KnowledgeBase
+from models import KnowledgeBase, ChatSession, ChatMessage
 import uuid
 
 print(Base,'BASE')
@@ -145,21 +145,104 @@ def delete_file_from_knowledge_base(
 async def chat_with_knowledge_base(
     knowledge_base_id: int = Form(...),
     query: str = Form(...),
+    session_id: str = Form(None),  # 新增：会话ID
     db: Session = Depends(get_db)
 ):
-    """
-    与指定知识库 (knowledge_base_id) 进行聊天
-    """
-    # 1. 获取知识库信息
+    """聊天，支持会话历史"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
     try:
-        result = llm.invoke(query, knowledge_base_id, db, ALI_TONGYI_MAX_MODEL, 256, 1)
+        result = llm.invoke(query, knowledge_base_id, db, session_id=session_id)
         return {"status": "success", "data": result}
     except Exception as e:
-        logger.error(f"聊天失败详情：{e}")
+        logger.error(f"聊天失败: {e}")
         raise HTTPException(status_code=500, detail=f"聊天失败: {str(e)}")
+
+# 创建新会话
+@app.post("/api/v1/chat-session/create")
+def create_chat_session(
+    knowledge_base_id: int = Form(None),
+    title: str = Form("新会话"),
+    db: Session = Depends(get_db)
+):
+    """创建新会话"""
+    session_id = str(uuid.uuid4().hex)[:12]  # 短ID，便于使用
+
+    new_session = ChatSession(
+        id=session_id,
+        kb_id=knowledge_base_id,
+        title=title
+    )
+    db.add(new_session)
+    db.commit()
+    db.refresh(new_session)
+
+    logger.info(f"创建会话: {session_id} (KB: {knowledge_base_id})")
+    return {"session_id": session_id, "title": title}
+
+# 获取会话列表
+@app.get("/api/v1/chat-sessions/list")
+def list_chat_sessions(db: Session = Depends(get_db)):
+    """获取用户会话列表（最近20个）"""
+    sessions = db.query(ChatSession).order_by(ChatSession.created_at.desc()).limit(20).all()
+    return {
+        "sessions": [{
+            "id": s.id,
+            "title": s.title,
+            "kb_id": s.kb_id,
+            "created_at": s.created_at.isoformat(),
+            "message_count": len(s.messages)
+        } for s in sessions]
+    }
+
+# 获取会话详情（消息历史）
+@app.get("/api/v1/chat-session/{session_id}")
+def get_chat_session(session_id: str, db: Session = Depends(get_db)):
+    """获取会话消息历史"""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id).all()
+    return {
+        "session": {
+            "id": session.id,
+            "title": session.title,
+            "kb_id": session.kb_id
+        },
+        "messages": [{
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "timestamp": m.created_at.isoformat()
+        } for m in messages]
+    }
+
+# 更新会话标题
+@app.post("/api/v1/chat-session/update")
+def update_chat_session(session_id: str, title: str = Form(...), db: Session = Depends(get_db)):
+    """更新会话标题"""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    session.title = title
+    db.commit()
+    return {"status": "updated"}
+
+# 删除会话
+@app.post("/api/v1/chat-session/delete")
+def delete_chat_session(session_id: str, db: Session = Depends(get_db)):
+    """删除会话（级联删除消息）"""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    llm.clear_session_history(session_id)
+    db.delete(session)
+    db.commit()
+    return {"status": "deleted"}
 
 if __name__ == "__main__":
     import uvicorn

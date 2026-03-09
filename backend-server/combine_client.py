@@ -1,4 +1,4 @@
-from typing import Iterable
+from typing import Iterable,Dict
 from langchain_classic.chains.combine_documents.stuff import create_stuff_documents_chain
 from langchain_classic.chains.retrieval import create_retrieval_chain
 from langchain_core.messages.ai import AIMessageChunk
@@ -7,6 +7,10 @@ from langchain_core.runnables.utils import AddableDict
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 from loguru import logger
+from fastapi import HTTPException
+from models import ChatSession, ChatMessage  # 新增导入
+from database import get_db  # 新增导入
+from sqlalchemy.orm import Session
 
 from knowledge import MyKnowledge
 from util import ALI_TONGYI_MAX_MODEL, get_lc_model_client
@@ -42,9 +46,40 @@ class CombineClient(MyKnowledge):
     """
     负责和大模型进行交互，并支持聊天历史记录；负责和知识库进行交互
     """
-    __chat_history = ChatMessageHistory()
+    def __init__(self):
+        self._session_history: Dict[str, ChatMessageHistory] = {}
 
-    def get_chain_by_knowledge_base_id(self, knowledge_base_id,db, model, max_length, temperature):
+    def _get_session_history(self, session_id: str,db: Session) -> ChatMessageHistory:
+        """
+        获取指定会话 ID 的聊天历史记录
+        :param session_id: 会话 ID
+        :return: 会话历史记录
+        """
+        if session_id not in self._session_history:
+            """获取或创建会话历史（数据库持久化）"""
+            history = ChatMessageHistory()
+            messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id).all()
+            for message in messages:
+                if message.role == 'human':
+                    history.add_user_message(message.content)
+                elif message.role == 'ai':
+                    history.add_ai_message(message.content)
+            self._session_history[session_id] = history
+        return self._session_history[session_id]
+
+    def _save_messages_to_db(self, session_id: str, input_msg: str, output_msg: str, db: Session):
+        """保存消息到数据库"""
+        # 保存用户消息
+        user_msg = ChatMessage(session_id=session_id, role="human", content=input_msg)
+        db.add(user_msg)
+
+        # 保存 AI 回复
+        ai_msg = ChatMessage(session_id=session_id, role="ai", content=output_msg)
+        db.add(ai_msg)
+
+        db.commit()
+
+    def get_chain_by_knowledge_base_id(self, knowledge_base_id,db, model, max_length, temperature,session_id):
         """
         根据具体的对话场景，返回一个链
         :param knowledge_base_id: 用户选择的知识库ID
@@ -54,17 +89,13 @@ class CombineClient(MyKnowledge):
         :param temperature: 模型参数，温度
         :return: 一个可以处理会话历史的链
         """
+        def get_history():
+            return self._get_session_history(session_id, db)
         retriever = None
         logger.info(f"knowledge_base_id: {knowledge_base_id}")
         if knowledge_base_id:
             retriever = self.get_retrievers_by_knowledge_base_id(knowledge_base_id,db)
             logger.debug(f"[{knowledge_base_id}]检索器为: {retriever}")
-
-        # 只保留3个记录
-        logger.info(f"len: {self.__chat_history.messages}####:{len(self.__chat_history.messages)}")
-        if len(self.__chat_history.messages) >= 6:
-            self.__chat_history.messages = self.__chat_history.messages[-6:]
-            logger.info(f"self.__chat_history.messages: {self.__chat_history.messages}")
 
         chat = get_lc_model_client(model=model, max_tokens=max_length, temperature=temperature)
 
@@ -84,7 +115,7 @@ class CombineClient(MyKnowledge):
         # 创建对话历史链
         chain_with_history = RunnableWithMessageHistory(
             rag_chain,
-            lambda session_id: self.__chat_history,
+            get_history,
             input_messages_key="input",
             history_messages_key="chat_history",
             output_messages_key="answer",
@@ -94,20 +125,51 @@ class CombineClient(MyKnowledge):
         logger.debug(f"当前的处理链: {chain_with_history}")
         return chain_with_history
 
-    def invoke(self, question, knowledge_base_id,db, model=ALI_TONGYI_MAX_MODEL, max_length=256, temperature=1):
-        return self.get_chain_by_knowledge_base_id(knowledge_base_id,db, model, max_length, temperature).invoke(
+    def invoke(self, question, knowledge_base_id,db,session_id, model=ALI_TONGYI_MAX_MODEL, max_length=256, temperature=1):
+        if not session_id:
+            raise HTTPException(status_code=400, detail="会话ID不能为空")
+            # session_id = str(uuid.uuid4().hex[:8])  # 生成临时会话ID
+        chain = self.get_chain_by_knowledge_base_id(knowledge_base_id, db, model, max_length, temperature, session_id)
+        result = chain.invoke(
             {"input": question},
-            {"configurable": {"session_id": "unused"}},
+            {"configurable": {"session_id": session_id}},
         )
 
-    def stream(self, question, knowledge_base_id,db, model=ALI_TONGYI_MAX_MODEL, max_length=256, temperature=1):
-        return self.get_chain_by_knowledge_base_id(knowledge_base_id,db, model, max_length, temperature).stream(
+        # 保存到数据库
+        self._save_messages_to_db(session_id, question, result['answer'], db)
+
+        return {"session_id": session_id, **result}
+        # return self.get_chain_by_knowledge_base_id(knowledge_base_id,db, model, max_length, temperature).invoke(
+        #     {"input": question},
+        #     {"configurable": {"session_id": session_id}},
+        # )
+
+    def stream(self, question, knowledge_base_id,db,session_id, model=ALI_TONGYI_MAX_MODEL, max_length=256, temperature=1):
+        if not session_id:
+            raise HTTPException(status_code=400, detail="会话ID不能为空")
+        chain = self.get_chain_by_knowledge_base_id(knowledge_base_id, db, model, max_length, temperature, session_id)
+        result = chain.stream(
             {"input": question},
-            {"configurable": {"session_id": "unused"}},
+            {"configurable": {"session_id": session_id}},
         )
+        # 保存到数据库
+        self._save_messages_to_db(session_id, question, result['answer'], db)
+        return {"session_id": session_id, **result}
+        # return self.get_chain_by_knowledge_base_id(knowledge_base_id,db, model, max_length, temperature).stream(
+        #     {"input": question},
+        #     {"configurable": {"session_id": session_id}},
+        # )
 
-    def clear_history(self) -> None:
-        self.__chat_history.clear()
+    def clear_session_history(self, session_id: str):
+        """清理指定会话的内存历史"""
+        if session_id in self._session_history:
+            self._session_history[session_id].clear()
+            del self._session_history[session_id]
+            logger.info(f"已清理内存历史: {session_id}")
 
-    def get_history_message(self):
-        return self.__chat_history.messages
+    def clear_all_histories(self):
+        """清理所有会话历史（慎用）"""
+        for session_id in self._session_history.keys():
+            self._session_history[session_id].clear()
+            del self._session_history[session_id]
+        logger.info("已清理所有内存历史")

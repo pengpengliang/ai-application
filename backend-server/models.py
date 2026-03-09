@@ -26,6 +26,7 @@ class ChatSession(Base):
     id = Column(String(64), primary_key=True, index=True)
     kb_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=True)
     title = Column(String(200))
+    created_at = Column(TIMESTAMP, default=datetime.now)
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
 
 class ChatMessage(Base):
@@ -35,4 +36,5 @@ class ChatMessage(Base):
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     sources = Column(JSON, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.now)
     session = relationship("ChatSession", back_populates="messages")
