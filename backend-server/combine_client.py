@@ -44,20 +44,21 @@ class CombineClient(MyKnowledge):
     """
     __chat_history = ChatMessageHistory()
 
-    def get_chain(self, collection, model, max_length, temperature):
+    def get_chain_by_knowledge_base_id(self, knowledge_base_id,db, model, max_length, temperature):
         """
         根据具体的对话场景，返回一个链
-        :param collection: 用户选择的知识库
+        :param knowledge_base_id: 用户选择的知识库ID
+        :param db: 数据库连接
         :param model: 选择的model
         :param max_length: 模型参数，最大文本长度
         :param temperature: 模型参数，温度
         :return: 一个可以处理会话历史的链
         """
         retriever = None
-        logger.info(f"collection: {collection}")
-        if collection:
-            retriever = self.get_retrievers(collection)
-            logger.debug(f"[{collection}]检索器为: {retriever}")
+        logger.info(f"knowledge_base_id: {knowledge_base_id}")
+        if knowledge_base_id:
+            retriever = self.get_retrievers_by_knowledge_base_id(knowledge_base_id,db)
+            logger.debug(f"[{knowledge_base_id}]检索器为: {retriever}")
 
         # 只保留3个记录
         logger.info(f"len: {self.__chat_history.messages}####:{len(self.__chat_history.messages)}")
@@ -93,14 +94,14 @@ class CombineClient(MyKnowledge):
         logger.debug(f"当前的处理链: {chain_with_history}")
         return chain_with_history
 
-    def invoke(self, question, collection, model=ALI_TONGYI_MAX_MODEL, max_length=256, temperature=1):
-        return self.get_chain(collection, model, max_length, temperature).invoke(
+    def invoke(self, question, knowledge_base_id,db, model=ALI_TONGYI_MAX_MODEL, max_length=256, temperature=1):
+        return self.get_chain_by_knowledge_base_id(knowledge_base_id,db, model, max_length, temperature).invoke(
             {"input": question},
             {"configurable": {"session_id": "unused"}},
         )
 
-    def stream(self, question, collection, model=ALI_TONGYI_MAX_MODEL, max_length=256, temperature=1):
-        return self.get_chain(collection, model, max_length, temperature).stream(
+    def stream(self, question, knowledge_base_id,db, model=ALI_TONGYI_MAX_MODEL, max_length=256, temperature=1):
+        return self.get_chain_by_knowledge_base_id(knowledge_base_id,db, model, max_length, temperature).stream(
             {"input": question},
             {"configurable": {"session_id": "unused"}},
         )

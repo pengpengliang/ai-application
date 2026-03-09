@@ -22,6 +22,14 @@ import tempfile
 import uuid
 import shutil
 
+DB_CONFIG = {
+    'host': 'localhost',
+    'port': 3306,
+    'user': 'root',
+    'password': 'mysql123',
+    'database': 'rag_knowledge_db'
+}
+
 def get_lc_model_client(api_key=os.getenv(ALI_TONGYI_API_KEY_OS_VAR_NAME), base_url=ALI_TONGYI_URL
                         , model=ALI_TONGYI_MAX_MODEL, temperature=0.7, max_tokens=8000,verbose=False, debug=False):
     """
@@ -39,7 +47,7 @@ def get_lc_model_client(api_key=os.getenv(ALI_TONGYI_API_KEY_OS_VAR_NAME), base_
 def get_ali_embeddings():
     """通过LangChain获得一个阿里通义千问嵌入模型的实例"""
     return DashScopeEmbeddings(
-        model=ALI_TONGYI_EMBEDDING_MODEL, dashscope_api_key=os.getenv(ALI_TONGYI_API_KEY_OS_VAR_NAME)
+        model=ALI_TONGYI_EMBEDDING_MODEL_V4, dashscope_api_key=os.getenv(ALI_TONGYI_API_KEY_OS_VAR_NAME)
     )
 
 def get_ali_rerank(top_n=10):
