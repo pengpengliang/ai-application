@@ -1,365 +1,249 @@
-#自动会话历史管理组件RunnableWithMessageHistory
-#以及如何流式处理大模型的应答
-from langchain_core.messages import HumanMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableWithMessageHistory
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.stores import InMemoryStore
-from langchain_chroma import Chroma
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_classic.retrievers  import MultiVectorRetriever
-import uuid
-from langchain_core.documents import Document
-from langchain_core.runnables import RunnableMap
-from util import get_lc_ali_all_clients,validate_file,save_uploaded_file,ALLOWED_EXTENSIONS,ID_KEY
-from langserve import add_routes
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from loguru import logger
+# from sqlalchemy.orm.collections import collection
+# 从llm模块中导入MyLLM类，这是自定义的大型语言模型接口
+from combine_client import CombineClient
+from logger import setup_logger
+from util import validate_file,ALLOWED_EXTENSIONS,ALI_TONGYI_MAX_MODEL, ALI_TONGYI_DEEPSEEK_R1, ALI_TONGYI_DEEPSEEK_V3
+from fastapi import FastAPI, File, UploadFile, HTTPException,Depends, Form
 from fastapi.responses import JSONResponse,StreamingResponse
-import os
-import tempfile
-from pathlib import Path
-import shutil
-import json
-from datetime import datetime
-from typing import List, Dict, Optional
-from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from database import get_db, engine, Base
+from models import KnowledgeBase, ChatSession, ChatMessage, KbFile
+import uuid
 
-app = FastAPI(title="文档上传处理API", description="支持txt、doc、docx文件上传的FastAPI服务")
-
-# 1.新会话需要一个给前端create接口 创建sessionId
-# 2.创建一个给前端的传输入的接口 需要记住会话 记住文档 记住对话历史
-# 3.创建一个接口给前端 根据sessionId 获取对话历史
-# 4.创建一个接口给前端 获取所有会话列表
-client,embeddings_model = get_lc_ali_all_clients()
-# 保存单个对话的store
-chat_history_store  = {}
-# 保存单个对话里文档的store
-doc_store = {}
-# 创建一个保存所有会话的store
-chat_list_store = []
-
-def load_document(file_path: str, file_extension: str) -> List[Document]:
-    """根据文件类型加载文档"""
-    try:
-        if file_extension == '.txt':
-            loader = TextLoader(file_path, encoding='utf-8')
-        elif file_extension in ['.doc', '.docx']:
-            # loader = UnstructuredWordDocumentLoader(file_path)
-            print(file_path)
-        else:
-            raise ValueError(f"不支持的文件类型: {file_extension}")
-
-        return loader.load()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"文档加载失败: {str(e)}")
-
-def process_document_for_session(session_id: str, file_path: str, file_extension: str):
-    """为特定会话处理文档"""
-    try:
-        # 加载文档
-        docs = load_document(file_path, file_extension)
-
-        # 分割文档
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=100)
-        split_docs = text_splitter.split_documents(docs)
-        doc_ids = [str(uuid.uuid4()) for _ in docs]
-        chain4 = (
-            {"doc": lambda x: x.page_content}
-            | ChatPromptTemplate.from_template("总结下面的文档：{doc}")
-            | client
-            | StrOutputParser()
-        )
-        summaries = chain4.batch(docs, {"max_concurrency": 5, })
-        summary_docs = [
-            Document(page_content=s, metadata={ID_KEY: doc_ids[i]}) for i, s in enumerate(summaries)
-        ]
-        # 创建向量存储
-        vectorstore = Chroma(
-            collection_name=f"session_{session_id}",
-            embedding_function=embeddings_model
-        )
-
-        # 存储文档内容供后续检索使用
-        doc_store[session_id] = {
-            "summary_docs": summary_docs,
-            "doc_ids": doc_ids,
-            "documents": split_docs,
-            "vectorstore": vectorstore,
-            "processed": True,
-            "file_path": file_path
-        }
-
-        return len(split_docs)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"文档处理失败: {str(e)}")
-
-def get_session(session_id:str):
-    if session_id not in chat_history_store:
-        chat_history_store[session_id] = ChatMessageHistory()
-    return chat_history_store[session_id]
-
-@app.post("/chat_session/create")
-def create_session():
-    session_id = str(uuid.uuid4())
-    return {"session_id": session_id}
-
-
-@app.post("/chat/stream")
-async def stream_chat_endpoint(
-        session_id: str = Form(...),
-        input_text: str = Form(...)
-):
-    """
-    流式聊天接口 - 实时返回AI回复
-
-    参数:
-    - session_id: 会话ID (FormData)
-    - input_text: 用户输入内容 (FormData)
-    """
-    try:
-        # 检查会话是否存在
-        # if session_id not in chat_history_store:
-        #     raise HTTPException(status_code=404, detail="会话不存在")
-
-        # 检查是否有文档
-        has_document = session_id in doc_store and doc_store[session_id].get("processed", False)
-
-        async def generate_stream():
-            try:
-                if not has_document:
-                    # 普通聊天模式 - 流式处理
-                    prompt_template = ChatPromptTemplate.from_messages([
-                        SystemMessagePromptTemplate.from_template(
-                            "你是一个智能聊天助手，请以友好和专业的方式回答用户问题"),
-                        MessagesPlaceholder(variable_name="history"),
-                        ("human", "{input}"),
-                    ])
-
-                    chain = prompt_template | client | StrOutputParser()
-                    chatbot_with_his = RunnableWithMessageHistory(
-                        chain,
-                        get_session,
-                        history_messages_key="history"
-                    )
-
-                    # 流式处理并返回JSON
-                    async for chunk in chatbot_with_his.astream(
-                            {"input": input_text},
-                            config={'configurable': {'session_id': session_id}}
-                    ):
-                        # 使用ensure_ascii=False避免Unicode转义
-                        response_data = {
-                            "content": chunk,
-                            "mode": "chat"
-                        }
-                        yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
-
-                else:
-                    # 文档问答模式
-                    summary_docs = doc_store[session_id]["summary_docs"]
-                    docs = doc_store[session_id]["documents"]
-                    doc_ids = doc_store[session_id]["doc_ids"]
-                    vectorstore = doc_store[session_id]["vectorstore"]
-                    store = InMemoryStore()
-                    ID_KEY = "doc_id"
-
-                    retriever = MultiVectorRetriever(
-                        vectorstore=vectorstore,
-                        docstore=store,
-                        id_key=ID_KEY,
-                    )
-
-                    retriever.vectorstore.add_documents(summary_docs)
-                    retriever.docstore.mset(list(zip(doc_ids, docs)))
-
-                    prompt_template = ChatPromptTemplate.from_messages([
-                        SystemMessagePromptTemplate.from_template(
-                            "你是一个文档总结专家，基于提供的文档内容准确回答用户问题，如果文档中没有相关信息，请明确说明"),
-                        ("human",
-                         "根据下面的文档回答问题:\n\n{doc}\n\n问题: {question}，如果文档里没有相关内容，则回答文档没有相关内容"),
-                    ])
-                    chain = RunnableMap({
-                        "doc": lambda x: retriever.invoke(x["input"]),
-                        "question": lambda x: x["input"]
-                    }) | prompt_template | client | StrOutputParser()
-                    chatbot_with_his = RunnableWithMessageHistory(
-                        chain,
-                        get_session,
-                        history_messages_key="history"
-                    )
-                    print(chatbot_with_his, 'chatbot_with_his')
-
-                    async for chunk in chatbot_with_his.astream(
-                            {"input": input_text},
-                            config={'configurable': {'session_id': session_id}}
-                    ):
-                        print(chunk, "chunk")
-                        response_data = {
-                            "content": chunk,
-                            "mode": "document_qa"
-                        }
-                        # json.dumps 将 Python 字典 response_data 序列化为 JSON 字符串，ensure_ascii=False 保证中文等 Unicode 字符不被转义
-                        yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
-
-                    # 对于文档问答，由于涉及检索，可能需要先处理完再流式返回
-                    # 这里简化处理，一次性返回结果
-                    # resp = chatbot_with_his.invoke(
-                    #     {"input": input_text},
-                    #     config={'configurable': {'session_id': session_id}}
-                    # )
-                    # print(resp, "resp")
-                    # response_data = {
-                    #     "content": resp,
-                    #     "mode": "document_qa"
-                    # }
-                    # yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
-
-
-            except Exception as e:
-                print(str(e))
-                error_data = {
-                    "error": str(e),
-                    "mode": "error"
-                }
-                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-
-        # 返回SSE流
-        return StreamingResponse(
-            generate_stream(),
-            media_type="text/event-stream; charset=utf-8",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Content-Type": "text/event-stream; charset=utf-8"
-            }
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"处理聊天请求时出错: {str(e)}")
-
-@app.post("/upload/")
-async def upload_file(
-        file: UploadFile = File(...),
-        session_id: str = Form(...),
-        process_method: str = Form(...)
-):
-    """
-    上传文件接口
-
-    参数:
-    - file: 上传的文件 (txt/doc/docx格式)
-    - process_method: 处理方法 ("basic" 或其他自定义方法)
-    """
-
-    # 验证文件
-    if not validate_file(file):
-        raise HTTPException(
-            status_code=400,
-            detail=f"不支持的文件类型。仅支持: {', '.join(ALLOWED_EXTENSIONS)}"
-        )
-
-    try:
-        # 保存文件
-        file_path = save_uploaded_file(file)
-        file_extension = Path(file.filename).suffix.lower()
-        doc_count = process_document_for_session(session_id, file_path, file_extension)
-
-        result = {
-            "filename": file.filename,
-            "file_size": os.path.getsize(file_path),
-            "message": "文档上传并处理成功",
-            "doc_count": doc_count
-        }
-
-        # 清理临时文件
-        # shutil.rmtree(os.path.dirname(file_path))
-
-        return JSONResponse(content=result)
-
-    except Exception as e:
-        # 如果出现错误，清理临时文件
-        if 'file_path' in locals():
-            try:
-                shutil.rmtree(os.path.dirname(file_path))
-            except:
-                pass
-        raise HTTPException(status_code=500, detail=f"处理文件时出错: {str(e)}")
-
-
-class MessageItem(BaseModel):
-    content: str
-    type: str  # human, ai, system
-    timestamp: Optional[str] = None
-
-
-class ChatHistoryResponse(BaseModel):
-    session_id: str
-    message_count: int
-    has_document: bool
-    messages: List[MessageItem]
-    created_at: Optional[str] = None
-
-
-@app.get("/chat-history/{session_id}", response_model=ChatHistoryResponse)
-async def get_chat_history(session_id: str):
-    """获取指定会话的聊天记录"""
-    history = get_session(session_id)
-    if history is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
-
-    # 格式化消息
-    messages = []
-    for msg in history.messages:
-        message_item = MessageItem(
-            content=msg.content,
-            type=msg.type,
-            timestamp=getattr(msg, 'additional_kwargs', {}).get('timestamp',datetime.now().isoformat())
-        )
-        messages.append(message_item)
-
-    # 检查文档状态
-    has_document = session_id in doc_store and doc_store[session_id].get("processed", False)
-
-    return ChatHistoryResponse(
-        session_id=session_id,
-        message_count=len(messages),
-        has_document=has_document,
-        messages=messages,
-        created_at=getattr(history, 'created_at', datetime.now().isoformat())
-    )
-
-
-@app.post("/clear-history/{session_id}")
-async def clear_chat_history(session_id: str):
-    """清除指定会话的聊天记录"""
-    if session_id in chat_history_store:
-        del chat_history_store[session_id]
-        return {"message": "聊天记录已清除","session_id":session_id}
-    raise HTTPException(status_code=404, detail="会话不存在")
-
+print(Base,'BASE')
+# 自动创建表（如果第一步手动建了表，这行可以注释掉，但留着也没坏处，作为双重保险）
+Base.metadata.create_all(bind=engine)
+app = FastAPI(title="知识库管理API", description="支持知识库增删改查服务")
+# 实例化MyLLM类，用于后续的模型调用和处理
+llm = CombineClient()
+setup_logger()
 
 @app.get("/test-chat")
 async def test_chat():
     """测试聊天接口"""
-    id = create_session()
-    session_id = id["session_id"]
-    res = stream_chat_endpoint(session_id, "你好,你是谁")
-    print(chat_history_store)
-    current_history = get_session(session_id)
-    print(f"当前历史条数: {len(current_history.messages)}")
-    for m in current_history.messages:
-        print(f"- {m.type}: {m.content}")
-    return JSONResponse(content={"status": "healthy","res": res,"session_id":session_id})
+    collections = llm.load_knowledge()
+    logger.info(f"加载知识库: {collections}")
+    res = llm.invoke('DeepSeek开源大模型DeepSeek-V2的关键开发者是谁？',collections[0],ALI_TONGYI_MAX_MODEL,256,1)
+    return JSONResponse(content={"status": "healthy","res": res['answer']})
 
+@app.post("/api/v1/knowledge-base/create")
+def create_knowledge_base(name: str, description: str = "", db: Session = Depends(get_db)):
+    # 1. 生成 Chroma 集合名 (简单起见用 UUID)
+    collection_name = f"kb_{uuid.uuid4().hex}"
 
+    # 2. 创建 ORM 对象
+    new_kb = KnowledgeBase(
+        name=name,
+        description=description,
+        chroma_collection_name=collection_name
+    )
+    logger.info(f"创建知识库: {new_kb.id} {new_kb.name} {new_kb.description} {new_kb.chroma_collection_name}")
+    # 3. 添加到数据库
+    db.add(new_kb)
+    db.commit()
+    db.refresh(new_kb)
 
-@app.get("/health")
-async def health_check():
-    """健康检查接口"""
-    return {"status": "healthy"}
+    # client = chromadb.Client()
+    # client.create_collection(name=collection_name)
+
+    return {"id": new_kb.id, "name": new_kb.name, "status": "created"}
+
+@app.post("/api/v1/knowledge-base/delete")
+def delete_knowledge_base(knowledge_base_id: int, db: Session = Depends(get_db)):
+    """
+    删除指定知识库, 并删除该知识库下所有文件, 包括索引文件, 并从内存中移除
+    """
+    try:
+        status = llm.delete_knowledge_base(knowledge_base_id, db)
+        return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除知识库失败: {str(e)}")
+
+@app.post("/api/v1/knowledge-base/update")
+def update_knowledge_base(
+    knowledge_base_id: int,
+    name: str = Form(...),
+    description: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """
+    更新指定知识库的信息
+    """
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    kb.name = name
+    kb.description = description
+    db.commit()
+    db.refresh(kb)
+    return {"status": "updated", "knowledge_base": kb}
+
+@app.get("/api/v1/knowledge-base/list")
+def list_knowledge_bases(db: Session = Depends(get_db)):
+    """
+    获取所有知识库
+    """
+    kbs = db.query(KnowledgeBase).all()
+    return {"knowledge_bases": kbs}
+
+@app.get("/api/v1/knowledge-base/{knowledge_base_id}")
+def get_knowledge_base(knowledge_base_id: int, db: Session = Depends(get_db)):
+    """
+    获取指定知识库的详细信息, 包括文件列表，并把他们的信息合起来返回
+    """
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    kb.files = db.query(KbFile).filter(KbFile.kb_id == knowledge_base_id).all()
+    return {"id": kb.id, "name": kb.name, "description": kb.description, "files": kb.files}
+
+@app.post("/api/v1/knowledge-base/upload-file")
+async def upload_file_to_knowledge_base(
+    knowledge_base_id: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    将文件上传到指定的知识库 (knowledge_base_id)
+    """
+    # 1. 获取知识库信息
+    logger.info(f"上传文件到知识库: {knowledge_base_id} {db.query(KnowledgeBase).all()}")
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+    logger.info(f"上传文件到知识库: {knowledge_base_id} {kb}")
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    try:
+        result = llm.upload_file_to_knowledge_base(file, knowledge_base_id,db)
+        return {"status": "success", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"上传失败详情：{e}")
+        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+
+@app.post("/api/v1/knowledge-base/delete-file")
+def delete_file_from_knowledge_base(
+    knowledge_base_id: int,
+    file_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    删除知识库中指定文件 ID 的文件及其索引
+    """
+    try:
+        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+        if not kb:
+            raise HTTPException(status_code=404, detail="知识库不存在")
+
+        result = llm.delete_file(knowledge_base_id, file_id, db)
+        return result
+    except Exception as e:
+        logger.error(f"删除文件失败: {e}")
+        raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
+
+@app.post("/api/v1/knowledge-base/chat")
+async def chat_with_knowledge_base(
+    knowledge_base_id: int = Form(...),
+    query: str = Form(...),
+    session_id: str = Form(None),  # 新增：会话ID
+    db: Session = Depends(get_db)
+):
+    """聊天，支持会话历史"""
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    try:
+        result = llm.invoke(query, knowledge_base_id, db, session_id=session_id)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        logger.error(f"聊天失败: {e}")
+        raise HTTPException(status_code=500, detail=f"聊天失败: {str(e)}")
+
+# 创建新会话
+@app.post("/api/v1/chat-session/create")
+def create_chat_session(
+    knowledge_base_id: int = Form(None),
+    title: str = Form("新会话"),
+    db: Session = Depends(get_db)
+):
+    """创建新会话"""
+    session_id = str(uuid.uuid4().hex)[:12]  # 短ID，便于使用
+
+    new_session = ChatSession(
+        id=session_id,
+        kb_id=knowledge_base_id,
+        title=title
+    )
+    db.add(new_session)
+    db.commit()
+    db.refresh(new_session)
+
+    logger.info(f"创建会话: {session_id} (KB: {knowledge_base_id})")
+    return {"session_id": session_id, "title": title}
+
+# 获取会话列表
+@app.get("/api/v1/chat-sessions/list")
+def list_chat_sessions(db: Session = Depends(get_db)):
+    """获取用户会话列表（最近20个）"""
+    sessions = db.query(ChatSession).order_by(ChatSession.created_at.desc()).limit(20).all()
+    return {
+        "sessions": [{
+            "id": s.id,
+            "title": s.title,
+            "kb_id": s.kb_id,
+            "created_at": s.created_at.isoformat(),
+            "message_count": len(s.messages)
+        } for s in sessions]
+    }
+
+# 获取会话详情（消息历史）
+@app.get("/api/v1/chat-session/{session_id}")
+def get_chat_session(session_id: str, db: Session = Depends(get_db)):
+    """获取会话消息历史"""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id).all()
+    return {
+        "session": {
+            "id": session.id,
+            "title": session.title,
+            "kb_id": session.kb_id
+        },
+        "messages": [{
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "timestamp": m.created_at.isoformat()
+        } for m in messages]
+    }
+
+# 更新会话标题
+@app.post("/api/v1/chat-session/update")
+def update_chat_session(session_id: str, title: str = Form(...), db: Session = Depends(get_db)):
+    """更新会话标题"""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    session.title = title
+    db.commit()
+    return {"status": "updated"}
+
+# 删除会话
+@app.post("/api/v1/chat-session/delete")
+def delete_chat_session(session_id: str, db: Session = Depends(get_db)):
+    """删除会话（级联删除消息）"""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    llm.clear_session_history(session_id)
+    db.delete(session)
+    db.commit()
+    return {"status": "deleted"}
 
 if __name__ == "__main__":
     import uvicorn
