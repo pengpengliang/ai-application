@@ -8,7 +8,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException,Depends, Form
 from fastapi.responses import JSONResponse,StreamingResponse
 from sqlalchemy.orm import Session
 from database import get_db, engine, Base
-from models import KnowledgeBase, ChatSession, ChatMessage
+from models import KnowledgeBase, ChatSession, ChatMessage, KbFile
 import uuid
 
 print(Base,'BASE')
@@ -90,12 +90,13 @@ def list_knowledge_bases(db: Session = Depends(get_db)):
 @app.get("/api/v1/knowledge-base/{knowledge_base_id}")
 def get_knowledge_base(knowledge_base_id: int, db: Session = Depends(get_db)):
     """
-    获取指定知识库的详细信息
+    获取指定知识库的详细信息, 包括文件列表，并把他们的信息合起来返回
     """
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    return kb
+    kb.files = db.query(KbFile).filter(KbFile.kb_id == knowledge_base_id).all()
+    return {"id": kb.id, "name": kb.name, "description": kb.description, "files": kb.files}
 
 @app.post("/api/v1/knowledge-base/upload-file")
 async def upload_file_to_knowledge_base(
